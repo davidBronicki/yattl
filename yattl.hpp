@@ -28,7 +28,7 @@
 //
 // priority: 5 6 7 4 3 1 2
 
-#define YATTL_INLINE inline
+#define YATTL_INLINE constexpr
 // #define YATTL_INLINE inline __attribute__((always_inline))
 
 #define TAG_CONCEPT(TagName)\
@@ -85,14 +85,14 @@ consteval std::array<size_t, N> locateKeys(
 }
 
 template <size_t... is>
-YATTL_INLINE constexpr decltype(auto) _helper_expandAndApply(
+YATTL_INLINE  decltype(auto) _helper_expandAndApply(
 	auto f, auto... args, auto rangeArgs, std::index_sequence<is...>)
 {
 	return f(args..., rangeArgs.begin()[is]...);
 }
 
 template <size_t n>
-YATTL_INLINE constexpr decltype(auto) expandAndApply(auto f, auto... args, auto rangeArgs)
+YATTL_INLINE  decltype(auto) expandAndApply(auto f, auto... args, auto rangeArgs)
 {
 	return _helper_expandAndApply(f, args..., rangeArgs, std::make_index_sequence<n>{});
 }
@@ -585,7 +585,7 @@ template <ConstexprWrappers::C_Family... Families>
 struct MetaBlueprint
 {
 	template <ConstexprWrappers::C_IndexSymmetryElement... Generators>
-	consteval auto operator()(Generators...)
+	YATTL_INLINE auto operator()(Generators...)
 	{
 		return ConstexprWrappers::Generic<Tensor::TensorStructure<Families::value.dim...>{
 			std::array{Families::value...},
@@ -1293,7 +1293,7 @@ consteval auto name()
 	return ConstexprWrappers::Generic<_name>{};
 }
 template <Index::NameType... _names>
-YATTL_INLINE constexpr auto batchNames()
+YATTL_INLINE auto batchNames()
 {
 	return std::make_tuple(ConstexprWrappers::Generic<_names>{}...);
 }
@@ -1307,7 +1307,7 @@ template <
 	ConstexprWrappers::C_Dim Dim,
 	ConstexprWrappers::C_Name Name1,
 	ConstexprWrappers::C_Name Name2>
-YATTL_INLINE constexpr auto familyPair(Dim, Name1, Name2)
+YATTL_INLINE auto familyPair(Dim, Name1, Name2)
 {
 	return std::make_tuple(
 		ConstexprWrappers::Generic<Index::IndexFamily{
@@ -1322,7 +1322,7 @@ YATTL_INLINE constexpr auto familyPair(Dim, Name1, Name2)
 template <
 	ConstexprWrappers::C_Dim Dim,
 	ConstexprWrappers::C_Name Name>
-consteval auto selfContractingFamily(Dim, Name)
+YATTL_INLINE auto selfContractingFamily(Dim, Name)
 {
 	return ConstexprWrappers::Generic<Index::IndexFamily{
 		.name = Name::value,
@@ -1333,7 +1333,7 @@ consteval auto selfContractingFamily(Dim, Name)
 template <
 	ConstexprWrappers::C_Family Family,
 	ConstexprWrappers::C_Name Name>
-consteval auto index(Family, Name)
+YATTL_INLINE auto index(Family, Name)
 {
 	return ConstexprWrappers::Generic<Index::Index{
 		.name = Name::value,
@@ -1343,7 +1343,7 @@ consteval auto index(Family, Name)
 template <
 	ConstexprWrappers::C_Family Family,
 	ConstexprWrappers::C_Name... Names>
-YATTL_INLINE constexpr auto batchIndices(Family family, Names... names)
+YATTL_INLINE auto batchIndices(Family family, Names... names)
 {
 	return std::make_tuple(index(family, names)...);
 }
@@ -1351,7 +1351,7 @@ YATTL_INLINE constexpr auto batchIndices(Family family, Names... names)
 template <
 	ConstexprWrappers::C_Family Family,
 	ConstexprWrappers::C_Name... Names>
-YATTL_INLINE constexpr auto batchPipeIndices(Family family, std::tuple<Names...>)
+YATTL_INLINE auto batchPipeIndices(Family family, std::tuple<Names...>)
 {
 	return std::make_tuple(index(family, Names{})...);
 }
@@ -1387,13 +1387,13 @@ consteval auto symmetryGenerator(Cycles...)
 
 template <
 	ConstexprWrappers::C_Family... Families>
-consteval auto tensorBlueprint(Families...)
+YATTL_INLINE auto tensorBlueprint(Families...)
 {
 	return ConstexprWrappers::MetaBlueprint<Families...>{};
 }
 
 template <ConstexprWrappers::C_Family... Families>
-consteval auto basicBlueprint(Families...)
+YATTL_INLINE auto basicBlueprint(Families...)
 {
 	return ConstexprWrappers::Generic<
 		Tensor::TensorStructure<Families::value.dim...>{
