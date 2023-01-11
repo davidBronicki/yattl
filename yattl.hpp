@@ -687,7 +687,7 @@ concept MultiplyCompatable =
 	TensorMultiplyCompatable<Left, Right>;
 
 template <typename Left, typename Right>
-concept AssignmentCompatale =
+concept AssignmentCompatable =
 	C_TensorExpression<Left> &&
 	(Left::indexInfo.contractedIndices().size() == 0) &&
 	TensorAddCompatable<Left, Right>;
@@ -1182,7 +1182,7 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 	// TensorExpression(TensorType const & _indexedTensor) : indexedTensor(_indexedTensor){}
 
 	template <typename Other>
-		requires Concepts::AssignmentCompatale<TensorExpression, Other>
+		requires Concepts::AssignmentCompatable<TensorExpression, Other>
 	YATTL_INLINE TensorExpression & operator=(Other const & other)
 	{
 		if constexpr (TensorType::elementMap.nonTrivialSymmetry)
@@ -1193,6 +1193,38 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 		else
 		{
 			Evaluate::trivialMapAssign<ExpressionType::Atomic>(*this, other);
+		}
+		return *this;
+	}
+
+	template <typename Other>
+		requires Concepts::AssignmentCompatable<TensorExpression, Other>
+	YATTL_INLINE TensorExpression & operator+=(Other const & other)
+	{
+		if constexpr (TensorType::elementMap.nonTrivialSymmetry)
+		{
+			Evaluate::nonTrivialMapAssign<
+				ExpressionType::Add>(*this, other);
+		}
+		else
+		{
+			Evaluate::trivialMapAssign<ExpressionType::Add>(*this, other);
+		}
+		return *this;
+	}
+
+	template <typename Other>
+		requires Concepts::AssignmentCompatable<TensorExpression, Other>
+	YATTL_INLINE TensorExpression & operator-=(Other const & other)
+	{
+		if constexpr (TensorType::elementMap.nonTrivialSymmetry)
+		{
+			Evaluate::nonTrivialMapAssign<
+				ExpressionType::Subtract>(*this, other);
+		}
+		else
+		{
+			Evaluate::trivialMapAssign<ExpressionType::Subtract>(*this, other);
 		}
 		return *this;
 	}
