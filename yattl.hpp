@@ -8,25 +8,48 @@
 #include <span>
 #include <ranges>
 
-// TODO:
-// 1. restructure to exclude algorithm and ranges.
-// these acount for most of the compile time.
-// 2.	a. separate runtime-facing constevals
-//   	from intermediate constevals
-//  	b. separate metavar types from
-//  	intermediate types
-//  	c.use more convenient and memory efficient
-//   	containers for intermediates?
-// 3. create proper concepts for Tensor
-// and TensorExpression instead of this
-// tag system
-// 4. benchmark always_inline vs inline only
-// 5. add += and -=
-// 6. test code correctness with various
-// container types and views
-// 7. ensure correct const awareness
-//
-// priority: 5 6 7 4 3 1 2
+/*
+TODO:
+
+1.  restructure to exclude algorithm and ranges.
+    these acount for most of the compile time.
+2.  a.  separate runtime-facing constevals
+        from intermediate constevals
+    b.  separate metavar types from
+        intermediate types
+    c.  use more convenient and memory efficient
+        containers for intermediates?
+3.  create proper concepts for Tensor
+    and TensorExpression instead of this
+    tag system
+4.  benchmark always_inline vs inline only
+5.  test code correctness with various
+    container types and views
+6.  ensure correct const awareness
+7.  document the damn code
+8.  add tensor slicing by giving constexpr integer index
+9.  add explicit component retrieval by tensor index
+    by (subscript op?)/(index funct?)/(call op?)
+10. add sub tensors by using subordinant indices,
+    e.g. grab the spatial components of a spacetime
+    tensor just by indexing with special indices
+11. add matrix inverse and determinant?
+12. change tensor template to allow direct user access
+    and easy use with template argument deduction guide
+13. add more and better user facing
+    blueprint/tensor generators
+14. try custom literal type for effectively dynamic lists
+15. change evaluation to improve -O0 optimized code gen
+16. try to add compile time expression optimization?
+17. a.  add "void apply(fn)" to tensor which applies
+        fn to each component
+	b.  add "auto applyAndWrap(fn)" to tensor which
+	    applies fn to each component and wraps the
+		results in a *new* tensor and returns this
+	c.  add these to expressions? for slicing behaviors
+18. add stand alone evaluate function
+    which returns new function
+*/
 
 #define YATTL_INLINE constexpr
 // #define YATTL_INLINE inline __attribute__((always_inline))
@@ -1325,7 +1348,7 @@ consteval auto name()
 	return ConstexprWrappers::Generic<_name>{};
 }
 template <Index::NameType... _names>
-YATTL_INLINE auto batchNames()
+consteval auto batchNames()
 {
 	return std::make_tuple(ConstexprWrappers::Generic<_names>{}...);
 }
