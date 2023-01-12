@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <cstddef>
 #include <cassert>
 
 #include <algorithm>
@@ -49,6 +48,7 @@ TODO:
 	c.  add these to expressions? for slicing behaviors
 18. add stand alone evaluate function
     which returns new function
+19. add allocator support
 */
 
 #define YATTL_INLINE constexpr
@@ -67,11 +67,69 @@ namespace yattl
 {
 namespace MetaHelpers
 {
+template <typename... Ts>
+struct Pack{};
+
+template <typename... Ps>
+struct Concat;
+
+template <typename... Ts>
+struct Concat<Pack<Ts...>>
+{
+	using T = Pack<Ts...>;
+};
+
+template <typename... Ts, typename... Ss, typename... Ps>
+struct Concat<Pack<Ts...>, Pack<Ss...>, Ps...>
+{
+	using T = Concat<Pack<Ts..., Ss...>, Ps...>::T;
+};
 
 template <size_t n, typename... Ts>
-YATTL_INLINE decltype(auto) get(Ts && ... ts) {
-	return std::get<n>(std::forward_as_tuple(ts...));
-}
+	requires (n < sizeof...(Ts))
+struct Split;
+
+template <size_t n, typename First, typename... Ts>
+	requires (n < sizeof...(Ts) + 1)
+struct Split<n, First, Ts...>
+{
+	using __S = Split<n-1,Ts...>;
+	using Left = Concat<Pack<First>, typename __S::Left>::T;
+	using T = __S::T;
+	using Right = __S::Right;
+};
+
+template <typename First, typename... Ts>
+	requires (0 < sizeof...(Ts) + 1)
+struct Split<0, First, Ts...>
+{
+	using Left = Pack<>;
+	using T = First;
+	using Right = Pack<Ts...>;
+};
+
+template <typename Left, typename T, typename Right>
+struct __get;
+
+template <typename... Lefts, typename T, typename... Rights>
+struct __get<Pack<Lefts...>, T, Pack<Rights...>>
+{
+	static YATTL_INLINE T & apply(Lefts & ..., T & t, Rights & ...)
+	{
+		return t;
+	}
+};
+
+template <size_t n, typename... Ts>
+constexpr auto get = __get<
+	typename Split<n, Ts...>::Left,
+	typename Split<n, Ts...>::T,
+	typename Split<n, Ts...>::Right>::apply;
+
+// template <size_t n, typename... Ts>
+// YATTL_INLINE decltype(auto) get(Ts && ... ts) {
+// 	return std::get<n>(std::forward_as_tuple(ts...));
+// }
 
 template <size_t N>
 consteval std::array<size_t, N> locateKeys(
@@ -621,12 +679,6 @@ struct MetaBlueprint
 
 namespace Concepts
 {
-namespace Helpers
-{
-template <std::ranges::range R>
-using RangeElementType = std::remove_reference_t<decltype(*std::declval<R>().begin())>;
-}
-
 // decides what type can multiply a tensor
 template <typename Scalar, typename Component>
 concept C_ScalarMultiplyCompatable =
@@ -651,15 +703,93 @@ concept C_ComponentType =
 		a = a * b;
 		a *= b;
 	};
-
-// std::is_same_v<T, float> || std::is_same_v<T, double>;
-
+// decides what type can be used as a tensor data container.
 template <typename T>
 concept C_DataRange =
 	std::ranges::random_access_range<T> &&
 	std::ranges::sized_range<T> &&
 	std::ranges::viewable_range<T> &&
-	C_ComponentType<Helpers::RangeElementType<T>>;
+	C_ComponentType<std::ranges::range_value_t<T>>;
+
+// concepts for enabling/disabling and dispatching
+// tensor member functions
+
+// initialization techniques decending in expected efficiency:
+//   by iterator
+//   default init->size zero and push_back
+//     maybe able to reserve space
+//   default init->size n and assignment
+//   sized init to n and assignment
+
+// iter construction
+
+template <typename T, typename Iter, typename Sentinel>
+concept IteratorConstructible =
+	std::sentinel_for<Sentinel, Iter> &&
+	std::constructible_from<T, Iter, Sentinel>;
+
+// zero size construction
+
+template <typename T>
+concept DefaultConstructsSizeZero =
+	std::ranges::size(T()) == 0;
+
+template <typename T, typename Component = std::ranges::range_value_t<T>>
+concept HasPushBack =
+	requires (T t, Component elem) { t.push_back(elem); };
+
+template <typename T, typename Component = std::ranges::range_value_t<T>>
+concept DefaultAndPushBackConstructible =
+	DefaultConstructsSizeZero<T> && HasPushBack<T, Component>;
+// reserve for better efficiency
+template <typename T>
+concept HasReserve = requires (T t) { t.reserve(10); };
+
+// n size construction
+
+template <size_t N, typename T>
+concept DefaultConstructsSizeN =
+	std::ranges::size(T()) == N;
+
+template <size_t N, typename T>
+concept SizedConstructible =
+	std::ranges::size(T(N)) == N;
+
+template <typename T, typename Component = std::ranges::range_value_t<T>>
+concept ElementAssignableFrom =
+	std::assignable_from<
+		std::ranges::range_value_t<T>, Component>;
+
+template <size_t N, typename T, typename Component = std::ranges::range_value_t<T>>
+concept DefaultAndAssignConstructible =
+	DefaultConstructsSizeN<N, T> && ElementAssignableFrom<T, Component>;
+
+template <size_t N, typename T, typename Component = std::ranges::range_value_t<T>>
+concept SizedAndAssignConstructible =
+	SizedConstructible<N, T> && ElementAssignableFrom<T, Component>;
+
+// full concepts
+
+// iterator constructible
+
+template <size_t N, typename T, typename Iter, typename Sentinel>
+concept TensorDataIteratorDefaultOrBetter =
+	IteratorConstructible<T, Iter, Sentinel> ||
+	DefaultAndPushBackConstructible<T, std::iter_value_t<Iter>> ||
+	DefaultAndAssignConstructible<N, T, std::iter_value_t<Iter>>;
+
+template <size_t N, typename T, typename Iter, typename Sentinel>
+concept TensorDataIteratorConstructible =
+	TensorDataIteratorDefaultOrBetter<N, T, Iter, Sentinel> ||
+	SizedAndAssignConstructible<N, T, std::iter_value_t<Iter>>;
+
+// range immediate constructible
+
+template <size_t N, typename T, typename Range>
+concept TensorDataRangeConstructible =
+	std::ranges::range<Range> && (TensorDataIteratorConstructible<
+		N, T, std::ranges::iterator_t<Range>, std::ranges::sentinel_t<Range>> ||
+		std::constructible_from<T, Range>);
 
 TAG_CONCEPT(Tensor)
 // TAG_CONCEPT(IndexedTensor)
@@ -790,7 +920,7 @@ Index::Index... indices>
 YATTL_INLINE decltype(auto) _helper_acquireProjectionValue(
 	Expr && expr, std::index_sequence<is...>, realizedIndex<indices>... realIs)
 {
-	return acquireValue(std::forward<Expr>(expr), MetaHelpers::get<projectionMap[is]>(realIs...)...);
+	return acquireValue(std::forward<Expr>(expr), MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...);
 }
 
 template <typename Expr, Index::Index... indices>
@@ -858,7 +988,7 @@ YATTL_INLINE size_t constructTrueIndex(
 	std::index_sequence<is...>, realizedIndex<indices>... realIs)
 {
 	constexpr auto strides = getStrides(std::array{indices...});
-	return ((eval(strides[is]) * MetaHelpers::get<is>(realIs.indexValue...)) + ...);
+	return ((eval(strides[is]) * MetaHelpers::get<is, decltype(realIs.indexValue)...>(realIs.indexValue...)) + ...);
 }
 
 template <
@@ -872,14 +1002,14 @@ YATTL_INLINE decltype(auto) _helper_acquireAtomValue(
 	using TrueExpr = std::remove_reference_t<Expr>;
 	if constexpr (TrueExpr::TType::elementMap.nonTrivialSymmetry)
 	{
-		auto index = constructTrueIndex(ints, MetaHelpers::get<projectionMap[is]>(realIs...)...);
+		auto index = constructTrueIndex(ints, MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...);
 		return expr.tensorDataView.begin()[TrueExpr::TType::elementMap.tensorIndexToDataIndex[index]] *
 			TrueExpr::TType::elementMap.tensorIndexToDataPrefactor[index];
 	}
 	else
 	{
 		return expr.tensorDataView.begin()[
-			constructTrueIndex(ints, MetaHelpers::get<projectionMap[is]>(realIs...)...)];
+			constructTrueIndex(ints, MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...)];
 	}
 }
 
@@ -1303,23 +1433,108 @@ class Tensor
 	// using DataRange = typename decltype(tensorStructure)::DataRange;
 	// using ComponentType = typename decltype(tensorStructure)::ComponentType;
 	using DataRange = _DataRange;
-	using ComponentType = Helpers::RangeElementType<DataRange>;
+	using ComponentType = std::ranges::range_value_t<DataRange>;
 	static constexpr size_t rank = tensorStructure.rank;
 	static constexpr auto elementMap = tensorStructure.elementMap;
+	static constexpr size_t dataCount = elementMap.trueSize;
 	private:
 	DataRange data;
 
+	template <typename Iterator, typename Sentinel>
+	YATTL_INLINE void assignInit(Iterator && iter, Sentinel && sent)
+	{
+		auto dataIt = data.begin();
+		while (iter != sent)
+		{
+			*dataIt = *iter;
+			++iter;
+			++dataIt;
+		}
+	}
+
 	public:
 
-	Tensor(DataRange const & _data):
-		data(_data){}
-	Tensor(DataRange && _data):
-		data(_data){}
+	// range construction
+
+	// more constrained, best strategy
+	template <typename Range>
+		requires std::ranges::range<Range> && std::constructible_from<DataRange, Range>
+	YATTL_INLINE Tensor(Range && range) : data(range) {}
+
+	// less constrained, defer to iter strategies
+	template <typename Range>
+		requires Concepts::TensorDataRangeConstructible<
+			dataCount, DataRange, Range>
+	YATTL_INLINE Tensor(Range && range) : Tensor(std::ranges::begin(range), std::ranges::end(range)) {}
+
+
+	// iterator construction
+
+	// most constrained, best strategy
+	template <typename Iterator, typename Sentinel>
+		requires Concepts::IteratorConstructible<DataRange, Iterator, Sentinel>
+	YATTL_INLINE Tensor (Iterator && iter, Sentinel && sent) : data(iter, sent)
+	{
+		assert(std::ranges::distance(iter, sent) == dataCount);
+	}
+
+	// middle constrained, default construct
+	template <typename Iterator, typename Sentinel>
+		requires Concepts::TensorDataIteratorDefaultOrBetter<
+			dataCount, DataRange, Iterator, Sentinel>
+	YATTL_INLINE Tensor (Iterator && iter, Sentinel && sent)
+	{
+		assert(std::ranges::distance(iter, sent) == dataCount);
+
+		// Concepts::IteratorConstructible should be handled
+		// by more constrained constructor above,
+		// so one of these better be true
+		static_assert(
+			Concepts::DefaultAndPushBackConstructible<DataRange, std::iter_value_t<Iterator>> ||
+			Concepts::DefaultAndAssignConstructible<dataCount, DataRange, std::iter_value_t<Iterator>>);
+		
+		// this is (assumed to be) the better strategy
+		if constexpr (Concepts::DefaultAndPushBackConstructible<DataRange, std::iter_value_t<Iterator>>)
+		{
+			// if available, reserve to minimize allocations
+			if constexpr (Concepts::HasReserve<DataRange>)
+			{
+				data.reserve(dataCount);
+			}
+			while (iter != sent)
+			{
+				data.push_back(*iter);
+				++iter;
+			}
+		}
+		else // worse strategy
+		{
+			assignInit(std::forward(iter), std::forward(sent));
+		}
+	}
+
+	// least constrained, sized construct
+	template <typename Iterator, typename Sentinel>
+		requires Concepts::TensorDataIteratorConstructible<
+			dataCount, DataRange, Iterator, Sentinel>
+	YATTL_INLINE Tensor (Iterator && iter, Sentinel && sent) : data(dataCount)
+	{
+		assert(std::ranges::distance(iter, sent) == dataCount);
+
+		// all other cases should be handled by more constrained constructors
+		static_assert(Concepts::SizedAndAssignConstructible<
+			dataCount, DataRange, std::iter_value_t<Iterator>>);
+		
+		assignInit(std::forward(iter), std::forward(sent));
+	}
+
+	// natural indexing function (call operator):
+	// produces atomic tensor expressions
 
 	template <typename... IndexTypes>
 		requires Concepts::ValidIndexing<
 			rank, tensorStructure.indexStructure, IndexTypes...>
-	auto operator()(IndexTypes... indices)
+	YATTL_INLINE auto operator()(IndexTypes... indices)
 	{
 		using IndexArray = std::array<Index::Index, rank>;
 		return Expression::TensorExpression<
@@ -1330,14 +1545,63 @@ class Tensor
 				IndexArray{IndexTypes::value...}>>{std::views::all(data)};
 	}
 
-	auto dataView()
+	// general STL container functions
+
+	YATTL_INLINE ComponentType & operator[](size_t i)
+	{
+		return std::ranges::begin(data)[i];
+	}
+	YATTL_INLINE ComponentType const & operator[](size_t i) const
+	{
+		return std::ranges::begin(data)[i];
+	}
+
+	YATTL_INLINE ComponentType & at(size_t i)
+	{
+		if (i < elementMap.trueSize)
+			return std::ranges::begin(data)[i];
+		else assert(false);
+	}
+	YATTL_INLINE ComponentType const & at(size_t i) const
+	{
+		if (i < elementMap.trueSize)
+			return std::ranges::begin(data)[i];
+		else assert(false);
+	}
+
+	YATTL_INLINE auto begin()
+	{
+		return std::ranges::begin(data);
+	}
+	YATTL_INLINE auto begin() const
+	{
+		return std::ranges::begin(data);
+	}
+	YATTL_INLINE auto end()
+	{
+		return std::ranges::end(data);
+	}
+	YATTL_INLINE auto end() const
+	{
+		return std::ranges::end(data);
+	}
+
+	YATTL_INLINE size_t size() const
+	{
+		return elementMap.trueSize;
+	}
+
+	YATTL_INLINE auto dataView()
+	{
+		return std::views::all(data);
+	}
+	YATTL_INLINE auto const dataView() const
 	{
 		return std::views::all(data);
 	}
 };
 
 } // namespace Tensor
-
 }
 
 namespace yattl
@@ -1459,9 +1723,9 @@ YATTL_INLINE auto basicBlueprint(Families...)
 template <
 	Concepts::C_DataRange DataRange,
 	Concepts::C_NonTrivialBlueprint Blueprint>
-YATTL_INLINE auto tensor(DataRange r, Blueprint)
+YATTL_INLINE auto tensor(DataRange && r, Blueprint)
 {
-	return Tensor::Tensor<Blueprint::value, DataRange>(std::move(r));
+	return Tensor::Tensor<Blueprint::value, DataRange>(std::forward<decltype(r)>(r));
 }
 
 } // namespace yattl
