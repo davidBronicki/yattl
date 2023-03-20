@@ -1,0 +1,29 @@
+{
+  BasedOnStyle: Microsoft,
+  AccessModifierOffset: 0,
+  ColumnLimit: 0,
+  # UseTab: ForContinuationAndIndentation,
+  UseTab: ForIndentation,
+  AlignOperands: DontAlign,
+  AlignAfterOpenBracket: DontAlign,
+  AllowShortBlocksOnASingleLine: Empty,
+  AllowShortFunctionsOnASingleLine: Empty,
+  AllowShortIfStatementsOnASingleLine: OnlyFirstIf,
+  AlignTrailingComments:
+  {
+    Kind: Never
+  },
+  BreakBeforeBinaryOperators: NonAssignment,
+  BreakBeforeBraces: Allman,
+  BreakBeforeConceptDeclarations: Always,
+  BreakBeforeTernaryOperators: false,
+  BreakConstructorInitializers: AfterColon,
+  BreakInheritanceList: AfterColon,
+  EmptyLineAfterAccessModifier: Always,
+  EmptyLineBeforeAccessModifier: Always,
+  IncludeBlocks: Regroup,
+  IndentAccessModifiers: false,
+  PointerAlignment: Middle,
+  ReferenceAlignment: Middle,
+  RequiresClausePosition: OwnLine
+}

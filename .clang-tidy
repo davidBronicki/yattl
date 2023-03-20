@@ -1,0 +1,30 @@
+Checks:
+  '-*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cert-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  google-*,
+  -google-readability-braces-around-statements,
+  hicpp-*,
+  -hicpp-braces-around-statements,
+  misc-*,
+  -misc-no-recursion,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  performance-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-braces-around-statements,
+  -readability-use-anyofallof,
+  -readability-static-accessed-through-instance'
+CheckOptions:
+- key: bugprone-argument-comment.StrictMode
+  value: 1
+- key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+  value: 1
+- key: readability-identifier-length.MinimumLoopCounterNameLength
+  value: 1
+FormatStyle: 'file'

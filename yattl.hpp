@@ -1,11 +1,10 @@
 #pragma once
 
-#include <array>
-#include <cassert>
-
 #include <algorithm>
-#include <span>
+#include <array>
 #include <ranges>
+#include <span>
+#include <stdexcept>
 
 /*
 TODO:
@@ -42,10 +41,10 @@ TODO:
 16. try to add compile time expression optimization?
 17. a.  add "void apply(fn)" to tensor which applies
         fn to each component
-	b.  add "auto applyAndWrap(fn)" to tensor which
-	    applies fn to each component and wraps the
-		results in a *new* tensor and returns this
-	c.  add these to expressions? for slicing behaviors
+    b.  add "auto applyAndWrap(fn)" to tensor which
+        applies fn to each component and wraps the
+        results in a *new* tensor and returns this
+    c.  add these to expressions? for slicing behaviors
 18. add stand alone evaluate function
     which returns new function
 19. add allocator support
@@ -54,21 +53,29 @@ TODO:
 #define YATTL_INLINE constexpr
 // #define YATTL_INLINE inline __attribute__((always_inline))
 
-#define TAG_CONCEPT(TagName)\
-namespace Helpers{\
-struct TagName{};}\
-template <typename T>\
-concept C_##TagName = std::is_same_v<typename T::_Tag_##TagName, Helpers::TagName>;
+// NOLINTNEXTLINE I know this is bad, I'll fix it eventually
+#define TAG_CONCEPT(TagName) \
+	namespace Helpers        \
+	{                        \
+	struct TagName           \
+	{                        \
+	};                       \
+	}                        \
+	template <typename T>    \
+	concept C_##TagName = std::is_same_v<typename T::_Tag_##TagName, Helpers::TagName>;
 
-#define ADD_TAG(TagName)\
-using _Tag_##TagName = Concepts::Helpers::TagName;
+// NOLINTNEXTLINE
+#define ADD_TAG(TagName) \
+	using _Tag_##TagName = Concepts::Helpers::TagName;
 
 namespace yattl
 {
 namespace MetaHelpers
 {
 template <typename... Ts>
-struct Pack{};
+struct Pack
+{
+};
 
 template <typename... Ps>
 struct Concat;
@@ -86,21 +93,21 @@ struct Concat<Pack<Ts...>, Pack<Ss...>, Ps...>
 };
 
 template <size_t n, typename... Ts>
-	requires (n < sizeof...(Ts))
+    requires(n < sizeof...(Ts))
 struct Split;
 
 template <size_t n, typename First, typename... Ts>
-	requires (n < sizeof...(Ts) + 1)
+    requires(n < sizeof...(Ts) + 1)
 struct Split<n, First, Ts...>
 {
-	using __S = Split<n-1,Ts...>;
-	using Left = Concat<Pack<First>, typename __S::Left>::T;
-	using T = __S::T;
-	using Right = __S::Right;
+	using S = Split<n - 1, Ts...>;
+	using Left = Concat<Pack<First>, typename S::Left>::T;
+	using T = S::T;
+	using Right = S::Right;
 };
 
 template <typename First, typename... Ts>
-	requires (0 < sizeof...(Ts) + 1)
+    requires(0 < sizeof...(Ts) + 1)
 struct Split<0, First, Ts...>
 {
 	using Left = Pack<>;
@@ -109,22 +116,23 @@ struct Split<0, First, Ts...>
 };
 
 template <typename Left, typename T, typename Right>
-struct __get;
+struct _get;
 
 template <typename... Lefts, typename T, typename... Rights>
-struct __get<Pack<Lefts...>, T, Pack<Rights...>>
+struct _get<Pack<Lefts...>, T, Pack<Rights...>>
 {
-	static YATTL_INLINE T & apply(Lefts & ..., T & t, Rights & ...)
+	static YATTL_INLINE T & apply(
+		Lefts &... /*meta*/, T & t, Rights &... /*meta*/)
 	{
 		return t;
 	}
 };
 
 template <size_t n, typename... Ts>
-constexpr auto get = __get<
-	typename Split<n, Ts...>::Left,
-	typename Split<n, Ts...>::T,
-	typename Split<n, Ts...>::Right>::apply;
+constexpr auto get = _get<
+    typename Split<n, Ts...>::Left,
+    typename Split<n, Ts...>::T,
+    typename Split<n, Ts...>::Right>::apply;
 
 // template <size_t n, typename... Ts>
 // YATTL_INLINE decltype(auto) get(Ts && ... ts) {
@@ -133,20 +141,24 @@ constexpr auto get = __get<
 
 template <size_t N>
 consteval std::array<size_t, N> locateKeys(
-	auto && keys,
-	auto && searchSpace)
+    auto && keys,
+    auto && searchSpace)
 {
-	std::array<size_t, N> output;
+	std::array<size_t, N> output{};
 	// searchSpace will be partially ordered, so we will
 	// treat it as if sorted but with cyclic boundaries.
-	// so whrn we reach the end of searchSpace, we return to the start
+	// so when we reach the end of searchSpace, we return to the start
 	size_t searchIndex = 0;
-	auto incr = [&searchIndex, &searchSpace]{searchIndex = (searchIndex + 1) % searchSpace.size();};
+	auto incr = [&searchIndex, &searchSpace]
+	{
+		searchIndex = (searchIndex + 1) % searchSpace.size();
+	};
 	for (size_t n = 0; n < N; ++n)
 	{
 		// if we come back to here then its not present
 		size_t noneFound = searchIndex;
-		do // must leave start pos first
+		// since we check if we reach the start pos, we must first leave the start pos
+		do // NOLINT
 		{
 			if (keys[n] == searchSpace[searchIndex])
 			{
@@ -156,29 +168,25 @@ consteval std::array<size_t, N> locateKeys(
 				break;
 			}
 			incr();
-		}
-		while (searchIndex != noneFound);
-		assert(noneFound == -1);
-		// if (noneFound != -1)
-		// 	output[n] = -1;
+		} while (searchIndex != noneFound);
 	}
 	return output;
 }
 
 template <size_t... is>
-YATTL_INLINE  decltype(auto) _helper_expandAndApply(
-	auto f, auto... args, auto rangeArgs, std::index_sequence<is...>)
+YATTL_INLINE decltype(auto) _helper_expandAndApply(
+    auto funct, auto... args, auto rangeArgs, std::index_sequence<is...> /*meta*/)
 {
-	return f(args..., rangeArgs.begin()[is]...);
+	return funct(args..., rangeArgs.begin()[is]...);
 }
 
 template <size_t n>
-YATTL_INLINE  decltype(auto) expandAndApply(auto f, auto... args, auto rangeArgs)
+YATTL_INLINE decltype(auto) expandAndApply(auto funct, auto... args, auto rangeArgs)
 {
-	return _helper_expandAndApply(f, args..., rangeArgs, std::make_index_sequence<n>{});
+	return _helper_expandAndApply(funct, args..., rangeArgs, std::make_index_sequence<n>{});
 }
 
-}
+} // namespace MetaHelpers
 
 namespace Index
 {
@@ -202,7 +210,7 @@ struct IndexFamily
 	}
 	consteval bool operator==(IndexFamily const & other) const
 	{
-		return *this <=> other == 0;
+		return (*this <=> other) == std::strong_ordering::equal;
 	}
 };
 
@@ -223,7 +231,7 @@ struct Index
 	}
 	consteval bool operator==(Index const & other) const
 	{
-		return *this <=> other == 0;
+		return (*this <=> other) == std::strong_ordering::equal;
 	}
 };
 
@@ -268,9 +276,9 @@ consteval bool disjoint(std::span<T> a, std::span<T> b)
 // contracting repeats
 consteval bool validRepeats(std::span<Index const> A, std::span<Index const> B)
 {
-	for (auto&& a : A)
+	for (auto && a : A)
 	{
-		for (auto&& b : B)
+		for (auto && b : B)
 		{
 			if (conflicts(a, b))
 				return false;
@@ -283,9 +291,9 @@ consteval bool validRepeats(std::span<Index const> A, std::span<Index const> B)
 // repeat labels at all
 consteval bool noCollisions(std::span<Index const> A, std::span<Index const> B)
 {
-	for (auto&& a : A)
+	for (auto && a : A)
 	{
-		for (auto&& b : B)
+		for (auto && b : B)
 		{
 			if (a.name == b.name)
 				return false;
@@ -331,22 +339,22 @@ struct IndexInfo
 	consteval std::span<Index::Index> freeIndices()
 	{
 		return std::span(
-			allIndices.begin(),
-			allIndices.begin() + contractedStart);
-			// allIndices.data() + contractedStart);
+		    allIndices.begin(),
+		    allIndices.begin() + contractedStart);
+		// allIndices.data() + contractedStart);
 	}
 	consteval std::span<Index::Index> contractedIndices()
 	{
 		return std::span(
-			allIndices.begin() + contractedStart,
-			allIndices.begin() + trashStart);
+		    allIndices.begin() + contractedStart,
+		    allIndices.begin() + trashStart);
 	}
 	consteval std::span<Index::Index> trashIndices()
 	{
 		return std::span(
-			allIndices.begin() + trashStart,
-			allIndices.begin() + totalSize);
-			// allIndices.begin() + redundantStart);
+		    allIndices.begin() + trashStart,
+		    allIndices.begin() + totalSize);
+		// allIndices.begin() + redundantStart);
 	}
 	// consteval std::span<Index::Index> redundantIndices()
 	// {
@@ -358,22 +366,22 @@ struct IndexInfo
 	consteval std::span<Index::Index const> freeIndices() const
 	{
 		return std::span(
-			allIndices.begin(),
-			allIndices.begin() + contractedStart);
-			// allIndices.data() + contractedStart);
+		    allIndices.begin(),
+		    allIndices.begin() + contractedStart);
+		// allIndices.data() + contractedStart);
 	}
 	consteval std::span<Index::Index const> contractedIndices() const
 	{
 		return std::span(
-			allIndices.begin() + contractedStart,
-			allIndices.begin() + trashStart);
+		    allIndices.begin() + contractedStart,
+		    allIndices.begin() + trashStart);
 	}
 	consteval std::span<Index::Index const> trashIndices() const
 	{
 		return std::span(
-			allIndices.begin() + trashStart,
-			allIndices.begin() + totalSize);
-			// allIndices.begin() + redundantStart);
+		    allIndices.begin() + trashStart,
+		    allIndices.begin() + totalSize);
+		// allIndices.begin() + redundantStart);
 	}
 	// consteval std::span<Index::Index const> redundantIndices() const
 	// {
@@ -383,24 +391,26 @@ struct IndexInfo
 	// }
 };
 
-}
+} // namespace Expression
 
 namespace Tensor
 {
 using PhaseType = int;
 
-template <size_t  n>
+template <size_t n>
 using SymmetricGroupElement = std::array<size_t, n>;
 
 template <size_t n>
-struct Cycle : std::array<size_t, n>{};
+struct Cycle : std::array<size_t, n>
+{
+};
 
 template <size_t n, typename T>
 consteval auto applyPermutation(
-	SymmetricGroupElement<n> const & permutation,
-	std::array<T, n> const & object)
+    SymmetricGroupElement<n> const & permutation,
+    std::array<T, n> const & object)
 {
-	std::array<T, n> output;
+	std::array<T, n> output{};
 	for (int i = 0; i < n; ++i)
 	{
 		output[permutation[i]] = object[i];
@@ -409,7 +419,7 @@ consteval auto applyPermutation(
 }
 
 template <typename T1, typename... Others>
-consteval auto composePermutations(T1 const & p1, Others const & ... others)
+consteval auto composePermutations(T1 const & p1, Others const &... others)
 {
 	if constexpr (sizeof...(Others) == 0)
 	{
@@ -429,7 +439,7 @@ consteval auto composePermutations(T1 p1, T2 p2, Others... others)
 
 template <size_t rank, size_t... ns>
 consteval auto makePermutation(
-	Cycle<ns>... cycles)
+    Cycle<ns>... cycles)
 {
 	if constexpr (sizeof...(ns) == 0)
 	{
@@ -447,11 +457,11 @@ consteval auto makePermutation(
 		{
 			output[i] = i;
 		}
-		for (size_t i = 1; i < (ns,...); ++i)
+		for (size_t i = 1; i < (ns, ...); ++i)
 		{
-			output[(cycles[i - 1],...)] = (cycles[i],...);
+			output[(cycles[i - 1], ...)] = (cycles[i], ...);
 		}
-		output[(cycles.back(),...)] = (cycles.front(),...);
+		output[(cycles.back(), ...)] = (cycles.front(), ...);
 		return output;
 	}
 	else
@@ -471,19 +481,27 @@ namespace Helpers
 {
 consteval size_t pow(size_t base, size_t power)
 {
-	if (power == 0) return 1;
-	return base * pow(base, power - 1);
+	size_t output = 1;
+	for (size_t i = 0; i < power; ++i)
+	{
+		output *= base;
+	}
+	return output;
 }
 
 consteval size_t factorial(size_t n)
 {
-	if (n == 0) return 1;
-	return n * factorial(n - 1);
+	size_t output = 1;
+	for (size_t i = 2; i <= n; ++i)
+	{
+		output *= i;
+	}
+	return output;
 }
 
 // template <size_t rank>
 // consteval auto canonicalize(std::array<size_t, rank> const & indices)
-}
+} // namespace Helpers
 
 template <Index::DimType... _dims>
 struct StaticElementMap
@@ -505,7 +523,7 @@ template <size_t rank>
 consteval std::array<size_t, rank> getStrides(std::array<size_t, rank> dims)
 {
 	size_t s = 1;
-	std::array<size_t, rank> output;
+	std::array<size_t, rank> output{};
 	for (size_t n = rank; n != 0; --n)
 	{
 		output[n - 1] = s;
@@ -518,7 +536,7 @@ consteval auto decomposeSuperIndex(size_t si)
 {
 	constexpr auto strides = getStrides(dims);
 	constexpr size_t rank = strides.size();
-	std::array<size_t, rank> output;
+	std::array<size_t, rank> output{};
 	for (size_t i = 0; i < rank; ++i)
 	{
 		output[i] = si / strides[i] % dims[i];
@@ -539,13 +557,12 @@ consteval auto composeSuperIndex(auto && is)
 }
 template <size_t... dims, size_t n>
 consteval void treeFill(
-	StaticElementMap<dims...> & mapper,
-	std::array<IndexSymmetryElement<sizeof...(dims)>, n> const & generators,
-	std::array<size_t, sizeof...(dims)> const & indices,
-	size_t dataIndex,
-	int prefactor)
+    StaticElementMap<dims...> & mapper,
+    std::array<IndexSymmetryElement<sizeof...(dims)>, n> const & generators,
+    std::array<size_t, sizeof...(dims)> const & indices,
+    size_t dataIndex,
+    int prefactor)
 {
-	constexpr size_t rank = sizeof...(dims);
 	constexpr auto arrayDims = std::array{dims...};
 	for (auto && gen : generators)
 	{
@@ -574,7 +591,7 @@ consteval void treeFill(
 }
 template <size_t... dims, size_t n>
 consteval auto constructElementMap(
-	std::array<IndexSymmetryElement<sizeof...(dims)>, n> const & generators)
+    std::array<IndexSymmetryElement<sizeof...(dims)>, n> const & generators)
 {
 	using SEM = StaticElementMap<dims...>;
 	constexpr auto arrayDims = std::array{dims...};
@@ -592,18 +609,22 @@ consteval auto constructElementMap(
 		output.tensorIndexToDataPrefactor[i] = 1;
 		output.tensorIndexToDataIndex[i] = output.trueSize;
 		output.dataIndexToTensorIndex[output.trueSize] =
-			decomposeSuperIndex<arrayDims>(i);
+		    decomposeSuperIndex<arrayDims>(i);
 		++output.trueSize;
-		treeFill(output, generators, output.dataIndexToTensorIndex[output.trueSize-1],
-			output.trueSize-1, 1);
+		treeFill(
+		    output,
+		    generators,
+		    output.dataIndexToTensorIndex[output.trueSize - 1],
+		    output.trueSize - 1,
+		    1);
 	}
-	
+
 	return output;
 }
 
 template <typename R>
 using RangeElementType = std::remove_reference_t<decltype(*std::declval<R>().begin())>;
-}
+} // namespace Helpers
 
 template <Index::DimType... dims>
 struct TensorStructure
@@ -616,7 +637,7 @@ struct TensorStructure
 	StaticElementMap<dims...> elementMap;
 };
 
-}
+} // namespace Tensor
 
 namespace ConstexprWrappers
 {
@@ -626,10 +647,14 @@ struct Generic
 	static constexpr auto value = _value;
 };
 
-template <template<auto...> typename Template, typename Type>
-struct TemplateAutoSpec : std::false_type{};
-template <template<auto...> typename Template, auto... args>
-struct TemplateAutoSpec<Template, Template<args...>> : std::true_type{};
+template <template <auto...> typename Template, typename Type>
+struct TemplateAutoSpec : std::false_type
+{
+};
+template <template <auto...> typename Template, auto... args>
+struct TemplateAutoSpec<Template, Template<args...>> : std::true_type
+{
+};
 
 template <template <auto...> typename Template, typename Type>
 concept C_TemplateAutoSpec = TemplateAutoSpec<Template, Type>::value;
@@ -638,7 +663,8 @@ template <typename T>
 concept C_Generic = C_TemplateAutoSpec<Generic, T>;
 
 template <typename T, typename S>
-concept C_TypedGeneric = C_Generic<T> && std::is_same_v<std::remove_cvref_t<decltype(T::value)>, S>;
+concept C_TypedGeneric = C_Generic<T>
+    && std::is_same_v<std::remove_cvref_t<decltype(T::value)>, S>;
 
 template <typename T>
 concept C_Name = C_TypedGeneric<T, Index::NameType>;
@@ -650,7 +676,8 @@ template <typename T>
 concept C_Index = C_TypedGeneric<T, Index::Index>;
 
 template <typename T, template <auto...> typename TT>
-concept C_TemplateTypedGeneric = C_Generic<T> && C_TemplateAutoSpec<TT, std::remove_cvref_t<decltype(T::value)>>;
+concept C_TemplateTypedGeneric = C_Generic<T>
+    && C_TemplateAutoSpec<TT, std::remove_cvref_t<decltype(T::value)>>;
 
 template <typename T>
 concept C_Permutation = C_TemplateTypedGeneric<T, Tensor::SymmetricGroupElement>;
@@ -666,50 +693,48 @@ template <ConstexprWrappers::C_Family... Families>
 struct MetaBlueprint
 {
 	template <ConstexprWrappers::C_IndexSymmetryElement... Generators>
-	YATTL_INLINE auto operator()(Generators...)
+	YATTL_INLINE auto operator()(Generators... /*meta*/)
 	{
 		return ConstexprWrappers::Generic<Tensor::TensorStructure<Families::value.dim...>{
-			std::array{Families::value...},
-			Tensor::Helpers::constructElementMap<Families::value.dim...>(
-				std::array{Generators::value...})}>{};
+		    std::array{Families::value...},
+		    Tensor::Helpers::constructElementMap<Families::value.dim...>(
+		        std::array{Generators::value...})}>{};
 	}
 };
 
-}
+} // namespace ConstexprWrappers
 
 namespace Concepts
 {
 // decides what type can multiply a tensor
 template <typename Scalar, typename Component>
 concept C_ScalarMultiplyCompatable =
-	std::convertible_to<decltype(std::declval<Scalar>() * std::declval<Component>()), Component>;
+    std::convertible_to<decltype(std::declval<Scalar>() * std::declval<Component>()), Component>;
 // decides what type can add to a tensor component
 // used for special operator+ with scalar-like tensor expressions
 template <typename Scalar, typename Component>
 concept C_ScalarAddCompatable =
-	std::convertible_to<decltype(std::declval<Scalar>() + std::declval<Component>()), Component>;
+    std::convertible_to<decltype(std::declval<Scalar>() + std::declval<Component>()), Component>;
 // decides what type can compose a tensor.
 template <typename T>
 concept C_ComponentType =
-	std::default_initializable<T> &&
-	requires (T a, T b)
-	{
-		// addition / subtraction
-		a = a + b;
-		a += b;
-		a = a - b;
-		a -= b;
-		// multiplication
-		a = a * b;
-		a *= b;
-	};
+    std::default_initializable<T> && requires(T a, T b) {
+	    // addition / subtraction
+	    a = a + b;
+	    a += b;
+	    a = a - b;
+	    a -= b;
+	    // multiplication
+	    a = a * b;
+	    a *= b;
+    };
 // decides what type can be used as a tensor data container.
 template <typename T>
 concept C_DataRange =
-	std::ranges::random_access_range<T> &&
-	std::ranges::sized_range<T> &&
-	std::ranges::viewable_range<T> &&
-	C_ComponentType<std::ranges::range_value_t<T>>;
+    std::ranges::random_access_range<T>
+    && std::ranges::sized_range<T>
+    && std::ranges::viewable_range<T>
+    && C_ComponentType<std::ranges::range_value_t<T>>;
 
 // concepts for enabling/disabling and dispatching
 // tensor member functions
@@ -725,48 +750,47 @@ concept C_DataRange =
 
 template <typename T, typename Iter, typename Sentinel>
 concept IteratorConstructible =
-	std::sentinel_for<Sentinel, Iter> &&
-	std::constructible_from<T, Iter, Sentinel>;
+    std::sentinel_for<Sentinel, Iter> && std::constructible_from<T, Iter, Sentinel>;
 
 // zero size construction
 
 template <typename T>
 concept DefaultConstructsSizeZero =
-	std::ranges::size(T()) == 0;
+    std::ranges::size(T()) == 0;
 
 template <typename T, typename Component = std::ranges::range_value_t<T>>
 concept HasPushBack =
-	requires (T t, Component elem) { t.push_back(elem); };
+    requires(T t, Component elem) { t.push_back(elem); };
 
 template <typename T, typename Component = std::ranges::range_value_t<T>>
 concept DefaultAndPushBackConstructible =
-	DefaultConstructsSizeZero<T> && HasPushBack<T, Component>;
+    DefaultConstructsSizeZero<T> && HasPushBack<T, Component>;
 // reserve for better efficiency
 template <typename T>
-concept HasReserve = requires (T t) { t.reserve(10); };
+concept HasReserve = requires(T t, size_t n) { t.reserve(n); };
 
 // n size construction
 
 template <size_t N, typename T>
 concept DefaultConstructsSizeN =
-	std::ranges::size(T()) == N;
+    std::ranges::size(T()) == N;
 
 template <size_t N, typename T>
 concept SizedConstructible =
-	std::ranges::size(T(N)) == N;
+    std::ranges::size(T(N)) == N;
 
 template <typename T, typename Component = std::ranges::range_value_t<T>>
 concept ElementAssignableFrom =
-	std::assignable_from<
-		std::ranges::range_value_t<T>, Component>;
+    std::assignable_from<
+        std::ranges::range_value_t<T>, Component>;
 
 template <size_t N, typename T, typename Component = std::ranges::range_value_t<T>>
 concept DefaultAndAssignConstructible =
-	DefaultConstructsSizeN<N, T> && ElementAssignableFrom<T, Component>;
+    DefaultConstructsSizeN<N, T> && ElementAssignableFrom<T, Component>;
 
 template <size_t N, typename T, typename Component = std::ranges::range_value_t<T>>
 concept SizedAndAssignConstructible =
-	SizedConstructible<N, T> && ElementAssignableFrom<T, Component>;
+    SizedConstructible<N, T> && ElementAssignableFrom<T, Component>;
 
 // full concepts
 
@@ -774,22 +798,23 @@ concept SizedAndAssignConstructible =
 
 template <size_t N, typename T, typename Iter, typename Sentinel>
 concept TensorDataIteratorDefaultOrBetter =
-	IteratorConstructible<T, Iter, Sentinel> ||
-	DefaultAndPushBackConstructible<T, std::iter_value_t<Iter>> ||
-	DefaultAndAssignConstructible<N, T, std::iter_value_t<Iter>>;
+    IteratorConstructible<T, Iter, Sentinel>
+    || DefaultAndPushBackConstructible<T, std::iter_value_t<Iter>>
+    || DefaultAndAssignConstructible<N, T, std::iter_value_t<Iter>>;
 
 template <size_t N, typename T, typename Iter, typename Sentinel>
 concept TensorDataIteratorConstructible =
-	TensorDataIteratorDefaultOrBetter<N, T, Iter, Sentinel> ||
-	SizedAndAssignConstructible<N, T, std::iter_value_t<Iter>>;
+    TensorDataIteratorDefaultOrBetter<N, T, Iter, Sentinel>
+    || SizedAndAssignConstructible<N, T, std::iter_value_t<Iter>>;
 
 // range immediate constructible
 
 template <size_t N, typename T, typename Range>
 concept TensorDataRangeConstructible =
-	std::ranges::range<Range> && (TensorDataIteratorConstructible<
-		N, T, std::ranges::iterator_t<Range>, std::ranges::sentinel_t<Range>> ||
-		std::constructible_from<T, Range>);
+    std::ranges::range<Range>
+    && (TensorDataIteratorConstructible<
+            N, T, std::ranges::iterator_t<Range>, std::ranges::sentinel_t<Range>>
+        || std::constructible_from<T, Range>);
 
 TAG_CONCEPT(Tensor)
 // TAG_CONCEPT(IndexedTensor)
@@ -806,13 +831,15 @@ TAG_CONCEPT(TensorExpression)
 // tensor addition must have two tensors with equal free indices
 template <typename Left, typename Right>
 concept TensorAddCompatable =
-	C_TensorExpression<Left> &&
-	C_TensorExpression<Right> &&
-	Index::setwiseEqual(Left::indexInfo.freeIndices(), Right::indexInfo.freeIndices());
+    C_TensorExpression<Left>
+    && C_TensorExpression<Right>
+    && Index::setwiseEqual(
+        Left::indexInfo.freeIndices(),
+        Right::indexInfo.freeIndices());
 
 template <typename Left, typename Right>
 concept AddCompatable =
-	TensorAddCompatable<Left, Right>;
+    TensorAddCompatable<Left, Right>;
 
 // // to be scalar multiplication, one must be a scalar and the other a tensor
 // template <typename Left, typename Right>
@@ -826,33 +853,42 @@ concept AddCompatable =
 // trash index sets
 template <typename Left, typename Right>
 concept TensorMultiplyCompatable =
-	C_TensorExpression<Left> &&
-	C_TensorExpression<Right> &&
-	Index::validRepeats(Left::indexInfo.freeIndices(), Right::indexInfo.freeIndices()) &&
-	Index::disjoint(Left::indexInfo.trashIndices(), Right::indexInfo.trashIndices()) &&
-	Index::disjoint(Left::indexInfo.freeIndices(), Right::indexInfo.trashIndices()) &&
-	Index::disjoint(Left::indexInfo.trashIndices(), Right::indexInfo.freeIndices());
+    C_TensorExpression<Left>
+    && C_TensorExpression<Right>
+    && Index::validRepeats(
+        Left::indexInfo.freeIndices(),
+        Right::indexInfo.freeIndices())
+    && Index::disjoint(
+        Left::indexInfo.trashIndices(),
+        Right::indexInfo.trashIndices())
+    && Index::disjoint(
+        Left::indexInfo.freeIndices(),
+        Right::indexInfo.trashIndices())
+    && Index::disjoint(
+        Left::indexInfo.trashIndices(),
+        Right::indexInfo.freeIndices());
 
 template <typename Left, typename Right>
 concept MultiplyCompatable =
-	// ScalarMultiplyCompatable<Left, Right> ||
-	// ScalarMultiplyCompatable<Right, Left> ||
-	TensorMultiplyCompatable<Left, Right>;
+    // ScalarMultiplyCompatable<Left, Right> ||
+    // ScalarMultiplyCompatable<Right, Left> ||
+    TensorMultiplyCompatable<Left, Right>;
 
 template <typename Left, typename Right>
 concept AssignmentCompatable =
-	C_TensorExpression<Left> &&
-	(Left::indexInfo.contractedIndices().size() == 0) &&
-	TensorAddCompatable<Left, Right>;
+    C_TensorExpression<Left>
+    && (Left::indexInfo.contractedIndices().size() == 0)
+    && TensorAddCompatable<Left, Right>;
 
 namespace Helpers
 {
 template <size_t n>
 consteval bool sameFamilySets(
-	std::array<Index::IndexFamily, n> const & left,
-	std::array<Index::IndexFamily, n> const & right)
+    std::array<Index::IndexFamily, n> const & left,
+    std::array<Index::IndexFamily, n> const & right)
 {
-	return Index::setwiseEqual(std::span(left.begin(), n), std::span(right.begin(), n));
+	return Index::setwiseEqual(
+	    std::span(left.begin(), n), std::span(right.begin(), n));
 }
 
 template <size_t n>
@@ -875,27 +911,27 @@ consteval bool noRepeats(yattl::Tensor::Cycle<n> c)
 	}
 	return true;
 }
-}
+} // namespace Helpers
 template <size_t rank, std::array<Index::IndexFamily, rank> fams, typename... IndexTypes>
 concept ValidIndexing =
-	(sizeof...(IndexTypes) == rank) &&
-	((ConstexprWrappers::C_Index<IndexTypes> && ...)) &&
-	// Helpers::ArrayEqual<Index::IndexFamily, rank, fams, std::array{IndexTypes::index.family...}>::value;
-	Helpers::sameFamilySets(fams, std::array{IndexTypes::value.family...});
+    (sizeof...(IndexTypes) == rank)
+    && ((ConstexprWrappers::C_Index<IndexTypes> && ...))
+    && Helpers::sameFamilySets(fams, std::array{IndexTypes::value.family...});
 
 template <size_t rank, typename T>
 concept RankConsistentCycle =
-	ConstexprWrappers::C_Cycle<T> &&
-	T::value.size() >= 2 &&
-	Helpers::allLessThan(T::value, rank) &&
-	Helpers::noRepeats(T::value);
+    ConstexprWrappers::C_Cycle<T>
+    && T::value.size() >= 2
+    && Helpers::allLessThan(T::value, rank)
+    && Helpers::noRepeats(T::value);
 
 template <typename T>
 concept C_NonTrivialBlueprint =
-	ConstexprWrappers::C_TensorBlueprint<T> && 
-	(!T::value.elementMap.nonTrivialSymmetry || T::value.elementMap.trueSize != 0);
+    ConstexprWrappers::C_TensorBlueprint<T>
+    && (!T::value.elementMap.nonTrivialSymmetry
+        || T::value.elementMap.trueSize != 0);
 
-}
+} // namespace Concepts
 
 namespace Evaluate
 {
@@ -913,14 +949,16 @@ namespace Helpers
 {
 
 template <
-auto projectionMap,
-typename Expr,
-size_t... is,
-Index::Index... indices>
+    auto projectionMap,
+    typename Expr,
+    size_t... is,
+    Index::Index... indices>
 YATTL_INLINE decltype(auto) _helper_acquireProjectionValue(
-	Expr && expr, std::index_sequence<is...>, realizedIndex<indices>... realIs)
+    Expr && expr, std::index_sequence<is...> /*meta*/, realizedIndex<indices>... realIs)
 {
-	return acquireValue(std::forward<Expr>(expr), MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...);
+	return acquireValue(
+	    std::forward<Expr>(expr),
+	    MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...);
 }
 
 template <typename Expr, Index::Index... indices>
@@ -928,48 +966,47 @@ YATTL_INLINE decltype(auto) acquireProductProjectionValue(Expr && expr, realized
 {
 	constexpr std::array<Index::Index, sizeof...(indices)> indexSet{indices...};
 	constexpr auto leftProjectionMap = MetaHelpers::locateKeys<
-		decltype(expr.left)::indexInfo.freeIndices().size()>(
-			decltype(expr.left)::indexInfo.freeIndices(),
-			std::span(indexSet.begin(), indexSet.end()));
+	    decltype(expr.left)::indexInfo.freeIndices().size()>(
+	    decltype(expr.left)::indexInfo.freeIndices(),
+	    std::span(indexSet.begin(), indexSet.end()));
 	constexpr auto rightProjectionMap = MetaHelpers::locateKeys<
-		decltype(expr.right)::indexInfo.freeIndices().size()>(
-			decltype(expr.right)::indexInfo.freeIndices(),
-			std::span(indexSet.begin(), indexSet.end()));
-	return
-		_helper_acquireProjectionValue<leftProjectionMap>(
-			expr.left,
-			std::make_index_sequence<leftProjectionMap.size()>{},
-			is...) *
-		_helper_acquireProjectionValue<rightProjectionMap>(
-			expr.right,
-			std::make_index_sequence<rightProjectionMap.size()>{},
-			is...);
+	    decltype(expr.right)::indexInfo.freeIndices().size()>(
+	    decltype(expr.right)::indexInfo.freeIndices(),
+	    std::span(indexSet.begin(), indexSet.end()));
+	return _helper_acquireProjectionValue<leftProjectionMap>(
+	           expr.left,
+	           std::make_index_sequence<leftProjectionMap.size()>{},
+	           is...)
+	    * _helper_acquireProjectionValue<rightProjectionMap>(
+	        expr.right,
+	        std::make_index_sequence<rightProjectionMap.size()>{},
+	        is...);
 }
 
-template <size_t contractionIndex>//, typename T, typename LeftExpr, typename RightExpr>
+template <size_t contractionIndex> //, typename T, typename LeftExpr, typename RightExpr>
 YATTL_INLINE void addToProduct(auto & result, auto && prodExpr, auto... is)
 // YATTL_INLINE void acquireValue(T & result, LeftExpr leftExpr, RightExpr rightExpr)
 {
 	using Expr = std::remove_reference_t<decltype(prodExpr)>;
 	if constexpr (2 * contractionIndex != Expr::indexInfo.contractedIndices().size())
-	for (size_t i = 0; i < Expr::indexInfo.contractedIndices()[2 * contractionIndex].family.dim; ++i)
-	{
-		addToProduct<contractionIndex + 1>(
-			result,
-			std::forward<decltype(prodExpr)>(prodExpr),
-			is...,
-			realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex]>{i},
-			realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex + 1]>{i});
-	}
+		for (size_t i = 0; i < Expr::indexInfo.contractedIndices()[2 * contractionIndex].family.dim; ++i)
+		{
+			addToProduct<contractionIndex + 1>(
+			    result,
+			    std::forward<decltype(prodExpr)>(prodExpr),
+			    is...,
+			    realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex]>{i},
+			    realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex + 1]>{i});
+		}
 	else
-	result += acquireProductProjectionValue(prodExpr, is...);
+		result += acquireProductProjectionValue(prodExpr, is...);
 }
 
 template <size_t N>
 consteval std::array<size_t, N> getStrides(std::array<Index::Index, N> is)
 {
 	size_t s = 1;
-	std::array<size_t, N> output;
+	std::array<size_t, N> output{};
 	for (size_t n = N; n != 0; --n)
 	{
 		output[n - 1] = s;
@@ -985,31 +1022,36 @@ consteval size_t eval(size_t in)
 
 template <size_t... is, Index::Index... indices>
 YATTL_INLINE size_t constructTrueIndex(
-	std::index_sequence<is...>, realizedIndex<indices>... realIs)
+    std::index_sequence<is...> /*meta*/, realizedIndex<indices>... realIs)
 {
 	constexpr auto strides = getStrides(std::array{indices...});
-	return ((eval(strides[is]) * MetaHelpers::get<is, decltype(realIs.indexValue)...>(realIs.indexValue...)) + ...);
+	return ((eval(strides[is])
+	            * MetaHelpers::get<is, decltype(realIs.indexValue)...>(
+	                realIs.indexValue...))
+	    + ...);
 }
 
 template <
-auto projectionMap,
-typename Expr,
-size_t... is,
-Index::Index... indices>
+    auto projectionMap,
+    typename Expr,
+    size_t... is,
+    Index::Index... indices>
 YATTL_INLINE decltype(auto) _helper_acquireAtomValue(
-	Expr && expr, std::index_sequence<is...> ints, realizedIndex<indices>... realIs)
+    Expr && expr, std::index_sequence<is...> ints, realizedIndex<indices>... realIs)
 {
 	using TrueExpr = std::remove_reference_t<Expr>;
 	if constexpr (TrueExpr::TType::elementMap.nonTrivialSymmetry)
 	{
-		auto index = constructTrueIndex(ints, MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...);
-		return expr.tensorDataView.begin()[TrueExpr::TType::elementMap.tensorIndexToDataIndex[index]] *
-			TrueExpr::TType::elementMap.tensorIndexToDataPrefactor[index];
+		auto index = constructTrueIndex(
+		    ints, MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...);
+		return expr.tensorDataView.begin()[TrueExpr::TType::elementMap
+		                                       .tensorIndexToDataIndex[index]]
+		    * TrueExpr::TType::elementMap.tensorIndexToDataPrefactor[index];
 	}
 	else
 	{
-		return expr.tensorDataView.begin()[
-			constructTrueIndex(ints, MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...)];
+		return expr.tensorDataView.begin()[constructTrueIndex(
+		    ints, MetaHelpers::get<projectionMap[is], decltype(realIs)...>(realIs...)...)];
 	}
 }
 
@@ -1019,34 +1061,36 @@ YATTL_INLINE decltype(auto) acquireAtomProjectionValue(Expr && expr, realizedInd
 	using TrueExpr = std::remove_reference_t<Expr>;
 	constexpr std::array<Index::Index, sizeof...(indices)> indexSet{indices...};
 	constexpr auto indexToSlotMap = MetaHelpers::locateKeys<TrueExpr::unsortedIndices.size()>(
-		std::span(TrueExpr::unsortedIndices.begin(), TrueExpr::unsortedIndices.end()),
-		std::span(indexSet.begin(), indexSet.end()));
+	    std::span(TrueExpr::unsortedIndices.begin(), TrueExpr::unsortedIndices.end()),
+	    std::span(indexSet.begin(), indexSet.end()));
 	return _helper_acquireAtomValue<indexToSlotMap>(
-		std::forward<Expr>(expr),
-		std::make_index_sequence<indexToSlotMap.size()>{},
-		is...);
+	    std::forward<Expr>(expr),
+	    std::make_index_sequence<indexToSlotMap.size()>{},
+	    is...);
 }
 
-template <size_t contractionIndex>//, typename T, typename LeftExpr, typename RightExpr>
+template <size_t contractionIndex>
 YATTL_INLINE void addToTrace(auto & result, auto && atomExpr, auto... is)
 // YATTL_INLINE void acquireValue(T & result, LeftExpr leftExpr, RightExpr rightExpr)
 {
 	using Expr = decltype(atomExpr);
 	if constexpr (2 * contractionIndex != Expr::indexInfo.contractedIndices().size())
-	for (size_t i = 0; i < Expr::indexInfo.contractedIndices()[2 * contractionIndex].family.dim; ++i)
-	{
-		addToTrace<contractionIndex + 1>(
-			result,
-			std::forward<decltyp(atomExpr)>(atomExpr),
-			is...,
-			realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex]>{i},
-			realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex + 1]>{i});
-	}
+		for (size_t i = 0;
+		     i < Expr::indexInfo.contractedIndices()[2 * contractionIndex].family.dim;
+		     ++i)
+		{
+			addToTrace<contractionIndex + 1>(
+			    result,
+			    std::forward<decltyp(atomExpr)>(atomExpr),
+			    is...,
+			    realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex]>{i},
+			    realizedIndex<Expr::indexInfo.contractedIndices()[2 * contractionIndex + 1]>{i});
+		}
 	else
-	result += acquireAtomProjectionValue(atomExpr, is...);
+		result += acquireAtomProjectionValue(atomExpr, is...);
 }
 
-}
+} // namespace Helpers
 
 template <typename Expr, Index::Index... indices>
 YATTL_INLINE decltype(auto) acquireValue(Expr && expr, realizedIndex<indices>... is)
@@ -1099,13 +1143,13 @@ YATTL_INLINE void trivialMapAssign(auto & destination, auto && source, realizedI
 	{
 		if constexpr (type == Expression::ExpressionType::Atomic)
 			Helpers::acquireAtomProjectionValue(destination, is...) =
-				acquireValue(std::forward<decltype(source)>(source), is...);
+			    acquireValue(std::forward<decltype(source)>(source), is...);
 		if constexpr (type == Expression::ExpressionType::Add)
 			Helpers::acquireAtomProjectionValue(destination, is...) +=
-				acquireValue(std::forward<decltype(source)>(source), is...);
+			    acquireValue(std::forward<decltype(source)>(source), is...);
 		if constexpr (type == Expression::ExpressionType::Subtract)
 			Helpers::acquireAtomProjectionValue(destination, is...) -=
-				acquireValue(std::forward<decltype(source)>(source), is...);
+			    acquireValue(std::forward<decltype(source)>(source), is...);
 		return;
 	}
 	else
@@ -1114,29 +1158,29 @@ YATTL_INLINE void trivialMapAssign(auto & destination, auto && source, realizedI
 		for (size_t i = 0; i < nextIndex.family.dim; ++i)
 		{
 			trivialMapAssign<type>(
-				destination,
-				std::forward<decltype(source)>(source),
-				is...,
-				realizedIndex<nextIndex>{i});
+			    destination,
+			    std::forward<decltype(source)>(source),
+			    is...,
+			    realizedIndex<nextIndex>{i});
 		}
 	}
-
 }
 
 template <size_t... is>
 YATTL_INLINE decltype(auto) _helper_forwardToAcquire(
-	auto && expr, auto const & trueIs, std::index_sequence<is...>)
+    auto && expr, auto const & trueIs, std::index_sequence<is...> /*meta*/)
 {
 	using Expr = std::remove_reference_t<decltype(expr)>;
-	return acquireValue(std::forward<decltype(expr)>(expr), realizedIndex<
-		Expr::indexInfo.freeIndices()[is]>{trueIs[is]}...);
+	return acquireValue(
+	    std::forward<decltype(expr)>(expr),
+	    realizedIndex<Expr::indexInfo.freeIndices()[is]>{trueIs[is]}...);
 }
 
 template <size_t n>
 YATTL_INLINE decltype(auto) forwardToAcquire(auto && expr, auto const & is)
 {
 	return _helper_forwardToAcquire(
-		std::forward<decltype(expr)>(expr), is, std::make_index_sequence<n>{});
+	    std::forward<decltype(expr)>(expr), is, std::make_index_sequence<n>{});
 }
 
 template <Expression::ExpressionType type>
@@ -1146,13 +1190,13 @@ YATTL_INLINE void nonTrivialMapAssign(auto & destination, auto && source)
 	for (size_t dataIndex = 0; dataIndex < Expr::TType::elementMap.trueSize; ++dataIndex)
 	{
 		destination.tensorDataView.begin()[dataIndex] =
-			forwardToAcquire<Expr::TType::elementMap.rank>(
-				std::forward<decltype(source)>(source),
-				Expr::TType::elementMap.dataIndexToTensorIndex[dataIndex]);
+		    forwardToAcquire<Expr::TType::elementMap.rank>(
+		        std::forward<decltype(source)>(source),
+		        Expr::TType::elementMap.dataIndexToTensorIndex[dataIndex]);
 	}
 }
 
-}
+} // namespace Evaluate
 
 namespace Expression
 {
@@ -1170,22 +1214,22 @@ consteval void fullSort(IndexInfo<N> & info)
 template <size_t N, size_t M>
 consteval IndexInfo<N + M> fullMerge(IndexInfo<N> const & left, IndexInfo<M> const & right)
 {
-	IndexInfo<N + M> output;
+	IndexInfo<N + M> output{};
 	output.contractedStart = left.contractedStart + right.contractedStart;
 	output.trashStart = left.trashStart + right.trashStart;
 	// output.redundantStart = left.redundantStart + right.redundantStart;
 	std::ranges::merge(
-		left.freeIndices(),
-		right.freeIndices(),
-		output.freeIndices().begin());
+	    left.freeIndices(),
+	    right.freeIndices(),
+	    output.freeIndices().begin());
 	std::ranges::merge(
-		left.contractedIndices(),
-		right.contractedIndices(),
-		output.contractedIndices().begin());
+	    left.contractedIndices(),
+	    right.contractedIndices(),
+	    output.contractedIndices().begin());
 	std::ranges::merge(
-		left.trashIndices(),
-		right.trashIndices(),
-		output.trashIndices().begin());
+	    left.trashIndices(),
+	    right.trashIndices(),
+	    output.trashIndices().begin());
 	// std::ranges::merge(
 	// 	left.redundantIndices(),
 	// 	right.redundantIndices(),
@@ -1203,7 +1247,7 @@ consteval void locateAndPlaceContractions(IndexInfo<N> & info)
 	{
 		if (!Index::contracts(freeSpan[i], freeSpan[i - 1]))
 			continue;
-		
+
 		--newEnd;
 		std::swap(freeSpan[i], *newEnd);
 
@@ -1219,10 +1263,10 @@ template <size_t N>
 consteval auto makeAtomicInfo(std::array<Index::Index, N> const & unsortedIndices)
 {
 	IndexInfo<N> output{
-		.allIndices{unsortedIndices},
-		.contractedStart = N,
-		.trashStart = N,
-		// .redundantStart = N
+	    .allIndices{unsortedIndices},
+	    .contractedStart = N,
+	    .trashStart = N,
+	    // .redundantStart = N
 	};
 	std::ranges::sort(output.allIndices);
 	locateAndPlaceContractions(output);
@@ -1230,8 +1274,8 @@ consteval auto makeAtomicInfo(std::array<Index::Index, N> const & unsortedIndice
 }
 template <size_t N, size_t M>
 consteval IndexInfo<N + M> joinProductInfos(
-	IndexInfo<N> const & left,
-	IndexInfo<M> const & right)
+    IndexInfo<N> const & left,
+    IndexInfo<M> const & right)
 {
 	IndexInfo<N + M> output = fullMerge(left, right);
 
@@ -1240,9 +1284,9 @@ consteval IndexInfo<N + M> joinProductInfos(
 	// constexpr, so rather than roll out our own
 	// we simply sort the full region.
 	std::ranges::sort(
-		output.allIndices.begin() + output.contractedStart,
-		output.allIndices.end());
-		// output.allIndices.begin() + output.redundantStart);
+	    output.allIndices.begin() + output.contractedStart,
+	    output.allIndices.end());
+	// output.allIndices.begin() + output.redundantStart);
 	output.trashStart = output.contractedStart;
 
 	locateAndPlaceContractions(output);
@@ -1251,13 +1295,13 @@ consteval IndexInfo<N + M> joinProductInfos(
 }
 template <size_t N, size_t M>
 consteval IndexInfo<N + M> joinAddedInfos(
-	IndexInfo<N> const & left,
-	IndexInfo<M> const & right)
+    IndexInfo<N> const & left,
+    IndexInfo<M> const & right)
 {
 	IndexInfo<N + M> output{
-		.allIndices{},
-		.contractedStart = left.contractedStart,
-		.trashStart = left.contractedStart};
+	    .allIndices{},
+	    .contractedStart = left.contractedStart,
+	    .trashStart = left.contractedStart};
 
 	for (size_t i = 0; i < N; ++i)
 	{
@@ -1267,24 +1311,21 @@ consteval IndexInfo<N + M> joinAddedInfos(
 	{
 		output.allIndices[i + N] = right.allIndices[i];
 	}
-	
+
 	std::ranges::sort(output.trashIndices());
 	return output;
 }
 template <size_t N, size_t M>
 consteval IndexInfo<N + M> joinInfos(
-	ExpressionType type,
-	IndexInfo<N> const & left,
-	IndexInfo<M> const & right)
+    ExpressionType type,
+    IndexInfo<N> const & left,
+    IndexInfo<M> const & right)
 {
 	if (type == ExpressionType::Multiply)
 	{
 		return joinProductInfos(left, right);
 	}
-	else
-	{
-		return joinAddedInfos(left, right);
-	}
+	return joinAddedInfos(left, right);
 }
 
 template <typename A, typename B>
@@ -1293,9 +1334,9 @@ template <typename A, typename B>
 using AddType = decltype(std::declval<A>() + std::declval<B>());
 template <ExpressionType type, typename A, typename B>
 using ResultantComponentType =
-	std::conditional<type == ExpressionType::Multiply, MultiplyType<A, B>, AddType<A, B>>::type;
+    std::conditional<type == ExpressionType::Multiply, MultiplyType<A, B>, AddType<A, B>>::type;
 
-}
+} // namespace Helpers
 
 template <ExpressionType _type, typename LeftExpressionType, typename RightExpressionType>
 struct TensorExpression // composite (non-atomic) expression
@@ -1303,14 +1344,14 @@ struct TensorExpression // composite (non-atomic) expression
 	ADD_TAG(TensorExpression)
 
 	using ComponentType = Helpers::ResultantComponentType<
-		_type,
-		typename LeftExpressionType::ComponentType,
-		typename RightExpressionType::ComponentType>;
+	    _type,
+	    typename LeftExpressionType::ComponentType,
+	    typename RightExpressionType::ComponentType>;
 
 	static constexpr auto indexInfo = Helpers::joinInfos(
-		_type,
-		LeftExpressionType::indexInfo,
-		RightExpressionType::indexInfo);
+	    _type,
+	    LeftExpressionType::indexInfo,
+	    RightExpressionType::indexInfo);
 	static constexpr ExpressionType type = _type;
 
 	LeftExpressionType left;
@@ -1323,7 +1364,7 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 	ADD_TAG(TensorExpression)
 
 	using DataView = std::views::all_t<
-		typename std::add_lvalue_reference_t<typename TensorType::DataRange>>;
+	    typename std::add_lvalue_reference_t<typename TensorType::DataRange>>;
 	using ComponentType = typename TensorType::ComponentType;
 	using TType = TensorType;
 
@@ -1335,13 +1376,13 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 	// TensorExpression(TensorType const & _indexedTensor) : indexedTensor(_indexedTensor){}
 
 	template <typename Other>
-		requires Concepts::AssignmentCompatable<TensorExpression, Other>
+	    requires Concepts::AssignmentCompatable<TensorExpression, Other>
 	YATTL_INLINE TensorExpression & operator=(Other const & other)
 	{
 		if constexpr (TensorType::elementMap.nonTrivialSymmetry)
 		{
 			Evaluate::nonTrivialMapAssign<
-				ExpressionType::Atomic>(*this, other);
+			    ExpressionType::Atomic>(*this, other);
 		}
 		else
 		{
@@ -1351,13 +1392,13 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 	}
 
 	template <typename Other>
-		requires Concepts::AssignmentCompatable<TensorExpression, Other>
+	    requires Concepts::AssignmentCompatable<TensorExpression, Other>
 	YATTL_INLINE TensorExpression & operator+=(Other const & other)
 	{
 		if constexpr (TensorType::elementMap.nonTrivialSymmetry)
 		{
 			Evaluate::nonTrivialMapAssign<
-				ExpressionType::Add>(*this, other);
+			    ExpressionType::Add>(*this, other);
 		}
 		else
 		{
@@ -1367,13 +1408,13 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 	}
 
 	template <typename Other>
-		requires Concepts::AssignmentCompatable<TensorExpression, Other>
+	    requires Concepts::AssignmentCompatable<TensorExpression, Other>
 	YATTL_INLINE TensorExpression & operator-=(Other const & other)
 	{
 		if constexpr (TensorType::elementMap.nonTrivialSymmetry)
 		{
 			Evaluate::nonTrivialMapAssign<
-				ExpressionType::Subtract>(*this, other);
+			    ExpressionType::Subtract>(*this, other);
 		}
 		else
 		{
@@ -1384,60 +1425,63 @@ struct TensorExpression<ExpressionType::Atomic, TensorType, IndexArray>
 };
 
 template <typename LeftType, typename RightType>
-	requires Concepts::AddCompatable<LeftType, RightType>
+    requires Concepts::AddCompatable<LeftType, RightType>
 YATTL_INLINE auto operator+(LeftType && left, RightType && right)
 {
 	// if constexpr (Concepts::ScalarAddCompatable<RightType, LeftType>) // return a scalar
 	// 	return TensorExpression<ExpressionType::Add, RightType, LeftType>{right, left};
 	return TensorExpression<
-		ExpressionType::Add,
-		std::remove_reference_t<LeftType>,
-		std::remove_reference_t<RightType>>{left, right};
+	    ExpressionType::Add,
+	    std::remove_reference_t<LeftType>,
+	    std::remove_reference_t<RightType>>{left, right};
 }
 
 template <typename LeftType, typename RightType>
-	requires Concepts::AddCompatable<LeftType, RightType>
+    requires Concepts::AddCompatable<LeftType, RightType>
 YATTL_INLINE auto operator-(LeftType && left, RightType && right)
 {
 	// if constexpr (Concepts::ScalarAddCompatable<RightType, LeftType>) // return a scalar
 	// 	return TensorExpression<ExpressionType::Subtract, RightType, LeftType>{right, left};
 	return TensorExpression<
-		ExpressionType::Subtract,
-		std::remove_reference_t<LeftType>,
-		std::remove_reference_t<RightType>>{left, right};
+	    ExpressionType::Subtract,
+	    std::remove_reference_t<LeftType>,
+	    std::remove_reference_t<RightType>>{left, right};
 }
 
 template <typename LeftType, typename RightType>
-	requires Concepts::MultiplyCompatable<LeftType, RightType>
+    requires Concepts::MultiplyCompatable<LeftType, RightType>
 YATTL_INLINE auto operator*(LeftType && left, RightType && right)
 {
 	// if constexpr (Concepts::ScalarMultiplyCompatable<RightType, LeftType>)
 	// 	return TensorExpression<ExpressionType::Multiply, RightType, LeftType>{right, left};
 	// check if we can return a scalar?
 	return TensorExpression<
-		ExpressionType::Multiply,
-		std::remove_reference_t<LeftType>,
-		std::remove_reference_t<RightType>>{left, right};
+	    ExpressionType::Multiply,
+	    std::remove_reference_t<LeftType>,
+	    std::remove_reference_t<RightType>>{left, right};
 }
 
 } // namespace Expression
 
 namespace Tensor
 {
-template <auto tensorStructure, typename _DataRange>
+template <auto tensorStructure, typename RangeType>
 class Tensor
 {
 	public:
+
 	ADD_TAG(Tensor)
 
 	// using DataRange = typename decltype(tensorStructure)::DataRange;
 	// using ComponentType = typename decltype(tensorStructure)::ComponentType;
-	using DataRange = _DataRange;
+	using DataRange = RangeType;
 	using ComponentType = std::ranges::range_value_t<DataRange>;
 	static constexpr size_t rank = tensorStructure.rank;
 	static constexpr auto elementMap = tensorStructure.elementMap;
 	static constexpr size_t dataCount = elementMap.trueSize;
+
 	private:
+
 	DataRange data;
 
 	template <typename Iterator, typename Sentinel>
@@ -1458,41 +1502,60 @@ class Tensor
 
 	// more constrained, best strategy
 	template <typename Range>
-		requires std::ranges::range<Range> && std::constructible_from<DataRange, Range>
-	YATTL_INLINE Tensor(Range && range) : data(range) {}
+	    requires std::ranges::range<Range> && std::constructible_from<DataRange, Range>
+	YATTL_INLINE explicit Tensor(Range && range) : // NOLINT
+	    data(std::forward<Range>(range))
+	{
+	}
 
-	// less constrained, defer to iter strategies
+	// less constrained, defer to iterator strategies.
+	// currently, this shadows the copy and move constructors for the Tensor class.
 	template <typename Range>
-		requires Concepts::TensorDataRangeConstructible<
-			dataCount, DataRange, Range>
-	YATTL_INLINE Tensor(Range && range) : Tensor(std::ranges::begin(range), std::ranges::end(range)) {}
-
+	    requires Concepts::TensorDataRangeConstructible<
+	        dataCount, DataRange, Range>
+	YATTL_INLINE explicit Tensor(Range && range) : // NOLINT
+	    Tensor(std::ranges::begin(range), std::ranges::end(range))
+	{
+	}
 
 	// iterator construction
 
 	// most constrained, best strategy
 	template <typename Iterator, typename Sentinel>
-		requires Concepts::IteratorConstructible<DataRange, Iterator, Sentinel>
-	YATTL_INLINE Tensor (Iterator && iter, Sentinel && sent) : data(iter, sent)
+	    requires Concepts::IteratorConstructible<DataRange, Iterator, Sentinel>
+	YATTL_INLINE Tensor(Iterator && iter, Sentinel && sent) :
+	    data(iter, sent)
 	{
-		assert(std::ranges::distance(iter, sent) == dataCount);
+#ifndef NDEBUG
+		if (std::ranges::distance(iter, sent) != dataCount)
+		{
+			throw std::invalid_argument(
+			    "Attempt to initialize Tensor with incorrect number of elements.");
+		}
+#endif
 	}
 
 	// middle constrained, default construct
 	template <typename Iterator, typename Sentinel>
-		requires Concepts::TensorDataIteratorDefaultOrBetter<
-			dataCount, DataRange, Iterator, Sentinel>
-	YATTL_INLINE Tensor (Iterator && iter, Sentinel && sent)
+	    requires Concepts::TensorDataIteratorDefaultOrBetter<
+	        dataCount, DataRange, Iterator, Sentinel>
+	YATTL_INLINE Tensor(Iterator && iter, Sentinel && sent)
 	{
-		assert(std::ranges::distance(iter, sent) == dataCount);
+#ifndef NDEBUG
+		if (std::ranges::distance(iter, sent) != dataCount)
+		{
+			throw std::invalid_argument(
+			    "Attempt to initialize Tensor with incorrect number of elements.");
+		}
+#endif
 
 		// Concepts::IteratorConstructible should be handled
 		// by more constrained constructor above,
 		// so one of these better be true
 		static_assert(
-			Concepts::DefaultAndPushBackConstructible<DataRange, std::iter_value_t<Iterator>> ||
-			Concepts::DefaultAndAssignConstructible<dataCount, DataRange, std::iter_value_t<Iterator>>);
-		
+		    Concepts::DefaultAndPushBackConstructible<DataRange, std::iter_value_t<Iterator>>
+		    || Concepts::DefaultAndAssignConstructible<dataCount, DataRange, std::iter_value_t<Iterator>>);
+
 		// this is (assumed to be) the better strategy
 		if constexpr (Concepts::DefaultAndPushBackConstructible<DataRange, std::iter_value_t<Iterator>>)
 		{
@@ -1515,16 +1578,23 @@ class Tensor
 
 	// least constrained, sized construct
 	template <typename Iterator, typename Sentinel>
-		requires Concepts::TensorDataIteratorConstructible<
-			dataCount, DataRange, Iterator, Sentinel>
-	YATTL_INLINE Tensor (Iterator && iter, Sentinel && sent) : data(dataCount)
+	    requires Concepts::TensorDataIteratorConstructible<
+	        dataCount, DataRange, Iterator, Sentinel>
+	YATTL_INLINE Tensor(Iterator && iter, Sentinel && sent) :
+	    data(dataCount)
 	{
-		assert(std::ranges::distance(iter, sent) == dataCount);
+#ifndef NDEBUG
+		if (std::ranges::distance(iter, sent) != dataCount)
+		{
+			throw std::invalid_argument(
+			    "Attempt to initialize Tensor with incorrect number of elements.");
+		}
+#endif
 
 		// all other cases should be handled by more constrained constructors
 		static_assert(Concepts::SizedAndAssignConstructible<
-			dataCount, DataRange, std::iter_value_t<Iterator>>);
-		
+		    dataCount, DataRange, std::iter_value_t<Iterator>>);
+
 		assignInit(std::forward(iter), std::forward(sent));
 	}
 
@@ -1532,17 +1602,17 @@ class Tensor
 	// produces atomic tensor expressions
 
 	template <typename... IndexTypes>
-		requires Concepts::ValidIndexing<
-			rank, tensorStructure.indexStructure, IndexTypes...>
-	YATTL_INLINE auto operator()(IndexTypes... indices)
+	    requires Concepts::ValidIndexing<
+	        rank, tensorStructure.indexStructure, IndexTypes...>
+	YATTL_INLINE auto operator()(IndexTypes... /*meta*/)
 	{
 		using IndexArray = std::array<Index::Index, rank>;
 		return Expression::TensorExpression<
-			Expression::ExpressionType::Atomic,
-			Tensor,
-			std::integral_constant<
-				IndexArray,
-				IndexArray{IndexTypes::value...}>>{std::views::all(data)};
+		    Expression::ExpressionType::Atomic,
+		    Tensor,
+		    std::integral_constant<
+		        IndexArray,
+		        IndexArray{IndexTypes::value...}>>{std::views::all(data)};
 	}
 
 	// general STL container functions
@@ -1560,13 +1630,13 @@ class Tensor
 	{
 		if (i < elementMap.trueSize)
 			return std::ranges::begin(data)[i];
-		else assert(false);
+		throw std::out_of_range("yattl::Tensor index out of range.");
 	}
 	YATTL_INLINE ComponentType const & at(size_t i) const
 	{
 		if (i < elementMap.trueSize)
 			return std::ranges::begin(data)[i];
-		else assert(false);
+		throw std::out_of_range("yattl::Tensor index out of range.");
 	}
 
 	YATTL_INLINE auto begin()
@@ -1602,7 +1672,7 @@ class Tensor
 };
 
 } // namespace Tensor
-}
+} // namespace yattl
 
 namespace yattl
 {
@@ -1623,66 +1693,66 @@ consteval auto dim()
 }
 
 template <
-	ConstexprWrappers::C_Dim Dim,
-	ConstexprWrappers::C_Name Name1,
-	ConstexprWrappers::C_Name Name2>
-YATTL_INLINE auto familyPair(Dim, Name1, Name2)
+    ConstexprWrappers::C_Dim Dim,
+    ConstexprWrappers::C_Name Name1,
+    ConstexprWrappers::C_Name Name2>
+YATTL_INLINE auto familyPair(Dim /*meta*/, Name1 /*meta*/, Name2 /*meta*/)
 {
 	return std::make_tuple(
-		ConstexprWrappers::Generic<Index::IndexFamily{
-			.name = Name1::value,
-			.contractionPairName = Name2::value,
-			.dim = Dim::value}>{},
-		ConstexprWrappers::Generic<Index::IndexFamily{
-			.name = Name2::value,
-			.contractionPairName = Name1::value,
-			.dim = Dim::value}>{});
+	    ConstexprWrappers::Generic<Index::IndexFamily{
+	        .name = Name1::value,
+	        .contractionPairName = Name2::value,
+	        .dim = Dim::value}>{},
+	    ConstexprWrappers::Generic<Index::IndexFamily{
+	        .name = Name2::value,
+	        .contractionPairName = Name1::value,
+	        .dim = Dim::value}>{});
 }
 template <
-	ConstexprWrappers::C_Dim Dim,
-	ConstexprWrappers::C_Name Name>
-YATTL_INLINE auto selfContractingFamily(Dim, Name)
+    ConstexprWrappers::C_Dim Dim,
+    ConstexprWrappers::C_Name Name>
+YATTL_INLINE auto selfContractingFamily(Dim /*meta*/, Name /*meta*/)
 {
 	return ConstexprWrappers::Generic<Index::IndexFamily{
-		.name = Name::value,
-		.contractionPairName = Name::value,
-		.dim = Dim::value}>{};
+	    .name = Name::value,
+	    .contractionPairName = Name::value,
+	    .dim = Dim::value}>{};
 }
 
 template <
-	ConstexprWrappers::C_Family Family,
-	ConstexprWrappers::C_Name Name>
-YATTL_INLINE auto index(Family, Name)
+    ConstexprWrappers::C_Family Family,
+    ConstexprWrappers::C_Name Name>
+YATTL_INLINE auto index(Family /*meta*/, Name /*meta*/)
 {
 	return ConstexprWrappers::Generic<Index::Index{
-		.name = Name::value,
-		.family = Family::value}>{};
+	    .name = Name::value,
+	    .family = Family::value}>{};
 }
 
 template <
-	ConstexprWrappers::C_Family Family,
-	ConstexprWrappers::C_Name... Names>
+    ConstexprWrappers::C_Family Family,
+    ConstexprWrappers::C_Name... Names>
 YATTL_INLINE auto batchIndices(Family family, Names... names)
 {
 	return std::make_tuple(index(family, names)...);
 }
 
 template <
-	ConstexprWrappers::C_Family Family,
-	ConstexprWrappers::C_Name... Names>
-YATTL_INLINE auto batchPipeIndices(Family family, std::tuple<Names...>)
+    ConstexprWrappers::C_Family Family,
+    ConstexprWrappers::C_Name... Names>
+YATTL_INLINE auto batchPipeIndices(Family family, std::tuple<Names...> /*meta*/)
 {
 	return std::make_tuple(index(family, Names{})...);
 }
 
 template <
-	Concepts::C_DataRange DataRange,
-	ConstexprWrappers::C_Family... Families>
-YATTL_INLINE auto basicTensor(DataRange data, Families...)
+    Concepts::C_DataRange DataRange,
+    ConstexprWrappers::C_Family... Families>
+YATTL_INLINE auto basicTensor(DataRange data, Families... /*meta*/)
 {
 	constexpr Tensor::TensorStructure<Families::value.dim...> structure{
-		.indexStructure{Families::value...},
-		.elementMap{.nonTrivialSymmetry = false}};
+	    .indexStructure{Families::value...},
+	    .elementMap{.nonTrivialSymmetry = false}};
 	return Tensor::Tensor<structure, DataRange>(std::move(data));
 }
 
@@ -1693,39 +1763,38 @@ consteval auto cycle()
 }
 
 template <size_t rank, int multiplier, typename... Cycles>
-	requires (
-		(Concepts::RankConsistentCycle<rank, Cycles> && ...) &&
-		(multiplier == 1 || multiplier == -1))
-consteval auto symmetryGenerator(Cycles...)
+    requires((Concepts::RankConsistentCycle<rank, Cycles> && ...)
+        && (multiplier == 1 || multiplier == -1))
+consteval auto symmetryGenerator(Cycles... /*meta*/)
 {
 	return ConstexprWrappers::Generic<
-		Tensor::IndexSymmetryElement<rank>{
-			Tensor::makePermutation<rank>(Cycles::value...),
-			multiplier}>{};
+	    Tensor::IndexSymmetryElement<rank>{
+	        Tensor::makePermutation<rank>(Cycles::value...),
+	        multiplier}>{};
 }
 
 template <
-	ConstexprWrappers::C_Family... Families>
-YATTL_INLINE auto tensorBlueprint(Families...)
+    ConstexprWrappers::C_Family... Families>
+YATTL_INLINE auto tensorBlueprint(Families... /*meta*/)
 {
 	return ConstexprWrappers::MetaBlueprint<Families...>{};
 }
 
 template <ConstexprWrappers::C_Family... Families>
-YATTL_INLINE auto basicBlueprint(Families...)
+YATTL_INLINE auto basicBlueprint(Families... /*meta*/)
 {
 	return ConstexprWrappers::Generic<
-		Tensor::TensorStructure<Families::value.dim...>{
-			.indexStructure{Families::value...},
-			.elementMap{.nonTrivialSymmetry = false}}>{};
+	    Tensor::TensorStructure<Families::value.dim...>{
+	        .indexStructure{Families::value...},
+	        .elementMap{.nonTrivialSymmetry = false}}>{};
 }
 
 template <
-	Concepts::C_DataRange DataRange,
-	Concepts::C_NonTrivialBlueprint Blueprint>
-YATTL_INLINE auto tensor(DataRange && r, Blueprint)
+    Concepts::C_DataRange DataRange,
+    Concepts::C_NonTrivialBlueprint Blueprint>
+YATTL_INLINE auto tensor(DataRange && r, Blueprint /*meta*/)
 {
-	return Tensor::Tensor<Blueprint::value, DataRange>(std::forward<decltype(r)>(r));
+	return Tensor::Tensor<Blueprint::value, DataRange>(std::forward<DataRange>(r));
 }
 
 } // namespace yattl
